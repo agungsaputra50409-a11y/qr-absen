@@ -1,0 +1,320 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#102b55">
+<title>ABSENSI QR SEKOLAH</title>
+
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;
+ font-family:Arial,sans-serif;
+ background:#edf3fb;
+ color:#102b55;
+}
+header{
+ background:#102b55;
+ color:white;
+ padding:22px;
+ text-align:center;
+}
+header h2{margin:0}
+main{
+ max-width:520px;
+ margin:25px auto;
+ padding:15px;
+}
+.card{
+ background:white;
+ padding:22px;
+ border-radius:18px;
+ box-shadow:0 5px 20px #0001;
+}
+#reader{
+ width:100%;
+ overflow:hidden;
+ border-radius:13px;
+ background:#102b55;
+ min-height:250px;
+}
+button{
+ width:100%;
+ border:0;
+ border-radius:10px;
+ padding:14px;
+ margin-top:12px;
+ font-weight:bold;
+ font-size:15px;
+ cursor:pointer;
+}
+.start{background:#2563eb;color:white}
+.stop{background:#fee2e2;color:#b91c1c}
+.back{background:#e2e8f0;color:#102b55}
+#result{
+ margin-top:18px;
+ padding:15px;
+ background:#eff6ff;
+ border-radius:12px;
+ min-height:65px;
+ line-height:1.6;
+ overflow-wrap:anywhere;
+}
+.status{
+ margin-top:12px;
+ font-size:13px;
+ color:#64748b;
+}
+footer{
+ text-align:center;
+ color:#64748b;
+ font-size:12px;
+ padding:20px;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+ <h2>ABSENSI QR SEKOLAH</h2>
+ <p>Scanner Kehadiran Siswa</p>
+</header>
+
+<main>
+ <div class="card">
+
+  <h3>📷 Pemindaian QR Code</h3>
+  <p>Arahkan kamera ke QR Code siswa.</p>
+
+  <div id="reader"></div>
+
+  <button class="start" id="startBtn">
+   AKTIFKAN KAMERA
+  </button>
+
+  <button class="stop" id="stopBtn" disabled>
+   HENTIKAN KAMERA
+  </button>
+
+  <button class="back" id="backBtn">
+   KEMBALI KE APLIKASI
+  </button>
+
+  <div id="status" class="status">
+   Kamera belum aktif.
+  </div>
+
+  <div id="result">
+   Hasil scan akan muncul di sini.
+  </div>
+
+ </div>
+</main>
+
+<footer>
+ ABSENSI QR SEKOLAH • GITHUB HTTPS
+</footer>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<script>
+const APPS_SCRIPT_URL =
+'https://script.google.com/macros/s/GANTI_DENGAN_URL_WEB_APP/exec';
+
+const params = new URLSearchParams(location.search);
+const token = params.get('token') || '';
+const returnUrl = params.get('return') || '';
+
+let scanner = null;
+let running = false;
+let processing = false;
+let lastCode = '';
+let lastTime = 0;
+
+const $ = id => document.getElementById(id);
+
+function message(text,color='#2563eb'){
+ $('status').textContent=text;
+ $('status').style.color=color;
+}
+
+async function startCamera(){
+
+ if(!window.isSecureContext){
+  message('Halaman harus dibuka melalui HTTPS.','#dc2626');
+  return;
+ }
+
+ if(!navigator.mediaDevices?.getUserMedia){
+  message('Browser tidak mendukung akses kamera.','#dc2626');
+  return;
+ }
+
+ if(!window.Html5Qrcode){
+  message('Library QR gagal dimuat. Periksa internet.','#dc2626');
+  return;
+ }
+
+ try{
+  await stopCamera();
+
+  scanner = new Html5Qrcode('reader');
+
+  message('Meminta izin kamera...');
+
+  const config={
+   fps:10,
+   qrbox:(w,h)=>{
+    const size=Math.floor(Math.min(w,h)*0.75);
+    return {width:size,height:size};
+   },
+   aspectRatio:1
+  };
+
+  try{
+   await scanner.start(
+    {facingMode:'environment'},
+    config,
+    onScan,
+    ()=>{}
+   );
+  }catch(e){
+   const cameras=await Html5Qrcode.getCameras();
+
+   if(!cameras.length) throw e;
+
+   await scanner.start(
+    cameras[cameras.length-1].id,
+    config,
+    onScan,
+    ()=>{}
+   );
+  }
+
+  running=true;
+  $('startBtn').disabled=true;
+  $('stopBtn').disabled=false;
+
+  message('KAMERA AKTIF. Silakan scan QR siswa.','#16a34a');
+
+ }catch(e){
+  await stopCamera();
+  message('Gagal membuka kamera: '+e.message,'#dc2626');
+ }
+}
+
+async function onScan(decodedText){
+
+ const code=String(decodedText).trim();
+ const now=Date.now();
+
+ if(!code || processing) return;
+
+ if(code===lastCode && now-lastTime<4000) return;
+
+ lastCode=code;
+ lastTime=now;
+ processing=true;
+
+ $('result').textContent='QR terbaca: '+code+'\nMengirim data...';
+
+ try{
+
+  if(!APPS_SCRIPT_URL.includes('/s/')){
+   throw new Error('URL Google Apps Script belum diatur.');
+  }
+
+  if(!token){
+   throw new Error('Token login tidak ditemukan. Buka scanner dari aplikasi utama.');
+  }
+
+  const response=await fetch(APPS_SCRIPT_URL,{
+   method:'POST',
+   headers:{
+    'Content-Type':'text/plain;charset=utf-8'
+   },
+   body:JSON.stringify({
+    action:'scan',
+    token:token,
+    code:code
+   })
+  });
+
+  if(!response.ok){
+   throw new Error('Server gagal menerima data.');
+  }
+
+  const data=await response.json();
+
+  if(!data.ok){
+   throw new Error(data.message || 'Absensi gagal.');
+  }
+
+  $('result').textContent=
+   'ABSENSI BERHASIL\n'+
+   'Nama: '+data.student.name+'\n'+
+   'NIS: '+data.student.nis+'\n'+
+   'Kelas: '+data.student.className+'\n'+
+   'Waktu: '+(data.time || '');
+
+  message('Absensi berhasil disimpan.','#16a34a');
+
+ }catch(e){
+
+  $('result').textContent='GAGAL: '+e.message;
+  message(e.message,'#dc2626');
+
+ }finally{
+
+  setTimeout(()=>{
+   processing=false;
+  },2000);
+
+ }
+}
+
+async function stopCamera(){
+
+ if(scanner){
+  try{
+   if(running) await scanner.stop();
+   await scanner.clear();
+  }catch(e){
+   console.log(e);
+  }
+ }
+
+ scanner=null;
+ running=false;
+
+ $('startBtn').disabled=false;
+ $('stopBtn').disabled=true;
+}
+
+$('startBtn').addEventListener('click',startCamera);
+
+$('stopBtn').addEventListener('click',()=>{
+ stopCamera();
+ message('Kamera dihentikan.');
+});
+
+$('backBtn').addEventListener('click',async()=>{
+ await stopCamera();
+
+ if(returnUrl){
+  location.href=returnUrl;
+ }else{
+  history.back();
+ }
+});
+
+window.addEventListener('pagehide',()=>{
+ stopCamera();
+});
+</script>
+
+</body>
+</html>
